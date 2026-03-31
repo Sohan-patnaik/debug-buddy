@@ -1,0 +1,8 @@
+pydantic
+langchain-google-genai
+sentence-transformers
+langchain
+langchain-core
+langchain-community
+lancedb
+crawl4ai
