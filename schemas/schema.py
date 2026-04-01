@@ -7,9 +7,13 @@ class ErrorType(str, Enum):
     VALUE = "value_error"
     TYPE = "type_error"
     RUNTIME = "runtime_error"
+    IMPORT = "import_error"
+    ATTRIBUTE = "attribute_error"
+    KEY = "key_error"
+    INDEX = "index_error"
 
 
-class RootCause(str, Enum):
+class ErrorCategory(str, Enum):
     RUNTIME = "runtime"
     LOGICAL = "logical"
     SYNTAX = "syntax"
@@ -33,7 +37,9 @@ class Context(BaseModel):
 
 
 class BugAnalysis(BaseModel):
-    root_cause: RootCause
+    root_cause: str                        
+    error_category: ErrorCategory          
+    responsible_lines: Optional[str] = None 
     summary: Optional[str] = None
 
 
@@ -50,10 +56,10 @@ class FixGenerator(BaseModel):
 
 
 class Evaluation(BaseModel):
-    validity: float
-    code_fix: float
-    regression_risk: float
-    score: float
+    validity: float = Field(..., ge=0.0, le=1.0)
+    code_fix: float = Field(..., ge=0.0, le=1.0)
+    regression_risk: float = Field(..., ge=0.0, le=1.0)
+    score: float = Field(..., ge=0.0, le=1.0)
     feedback: str
 
 

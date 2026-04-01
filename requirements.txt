@@ -1,5 +1,5 @@
 pydantic
-langchain-google-genai
+langchain-nvidia-ai-endpoints
 sentence-transformers
 langchain
 langchain-core
