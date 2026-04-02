@@ -32,7 +32,7 @@ class Retrieve:
         self.embedding = NVIDIAEmbeddings(
             model="nvidia/nv-embed-v1",
             api_key=os.getenv("NVIDIA_API_KEY"),
-            truncate="END",  # safer than NONE — avoids token limit errors
+            truncate="END",
         )
         self.code_context = state
 
@@ -48,8 +48,7 @@ class Retrieve:
     async def _web_search(self) -> list[Document]:
         logger.info(f"Starting web search for error: {self.code_context.error[:80]}")
 
-        # dynamic GFG search based on actual error
-        gfg_query = f"python {self.code_context.error}"
+        gfg_query = f"code {self.code_context.error}"
         gfg_task = asyncio.to_thread(scrape_gfg_article, gfg_query)
         stack_task = asyncio.to_thread(search_with_answers, self.code_context.error)
 
@@ -63,7 +62,7 @@ class Retrieve:
             logger.warning(f"GFG scrape failed: {gfg_result}")
         elif gfg_result:
             content = self._clean(str(gfg_result))
-            if len(content) > 100:  # skip empty/useless results
+            if len(content) > 100: 
                 raw_docs.append(Document(page_content=content, metadata={"source": "gfg"}))
                 logger.info("GFG: added document")
 
