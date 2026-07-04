@@ -53,24 +53,25 @@ class RefinementAgent:
         }
 
     def _refine_with_feedback(self, code: str, feedback: str):
-        prompt = f"""
-Improve the following code based on feedback:
+        prompt = f"""You are a senior developer. Improve the following code based on feedback.
+Return the corrected code directly inside JSON with key 'correct_code'. No markdown formatting outside JSON.
 
 Code:
 {code}
 
 Feedback:
 {feedback}
-
-Return only improved code.
 """
-        model = LLM.get_llm()
+        model = LLM().get_llm()
         result = model.invoke(prompt)
+        content = result.content if hasattr(result, "content") else str(result)
+        
+        import re
+        content_clean = re.sub(r"```(?:json)?", "", content).strip().rstrip("`").strip()
+        
         try:
-           parsed=json.loads(result)
+            parsed = json.loads(content_clean)
+            return parsed.get("correct_code", code)
         except Exception:
-            parsed={
-                "corrected_code":"Code is not formatted correctly"
-            }   
-
-        return parsed["correct_code"]
+            # Fallback to direct content if not JSON
+            return content_clean or code

@@ -1,7 +1,6 @@
 from langchain_community.vectorstores import Chroma
 from langchain_nvidia_ai_endpoints import NVIDIAEmbeddings
 from langchain_core.documents import Document
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 from schemas.schema import CodeInput
 from sources.gfg import scrape_gfg_article
 from sources.stack import search_with_answers
@@ -20,11 +19,29 @@ CHUNK_SIZE = 500
 CHUNK_OVERLAP = 50
 FRONTEND_KEYWORDS = {"jsx", "tsx", "next", "react", "component", "vue", "svelte"}
 
-splitter = RecursiveCharacterTextSplitter(
-    chunk_size=CHUNK_SIZE,
-    chunk_overlap=CHUNK_OVERLAP,
-    separators=["\n\n", "\n", ". ", " ", ""],
-)
+class SimpleTextSplitter:
+    def __init__(self, chunk_size=500, chunk_overlap=50):
+        self.chunk_size = chunk_size
+        self.chunk_overlap = chunk_overlap
+
+    def split_documents(self, documents: list[Document]) -> list[Document]:
+        chunked_docs = []
+        for doc in documents:
+            text = doc.page_content
+            start = 0
+            while start < len(text):
+                end = start + self.chunk_size
+                chunk_text = text[start:end]
+                chunked_docs.append(Document(
+                    page_content=chunk_text,
+                    metadata=doc.metadata
+                ))
+                start += self.chunk_size - self.chunk_overlap
+                if start >= len(text) or (self.chunk_size - self.chunk_overlap) <= 0:
+                    break
+        return chunked_docs
+
+splitter = SimpleTextSplitter(chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP)
 
 
 class Retrieve:
@@ -48,19 +65,26 @@ class Retrieve:
     async def _web_search(self) -> list[Document]:
         logger.info(f"Starting web search for error: {self.code_context.error[:80]}")
 
-        gfg_query = f"code {self.code_context.error}"
-        gfg_task = asyncio.to_thread(scrape_gfg_article, gfg_query)
-        stack_task = asyncio.to_thread(search_with_answers, self.code_context.error)
+        tasks = []
+        gfg_index = -1
+        stack_index = -1
 
-        gfg_result, stack_result = await asyncio.gather(
-            gfg_task, stack_task, return_exceptions=True
-        )
+        # Only scrape GFG if error is a URL
+        if self.code_context.error.startswith("http"):
+            tasks.append(asyncio.to_thread(scrape_gfg_article, self.code_context.error))
+            gfg_index = len(tasks) - 1
+
+        tasks.append(asyncio.to_thread(search_with_answers, self.code_context.error))
+        stack_index = len(tasks) - 1
+
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        gfg_result = results[gfg_index] if gfg_index != -1 else None
+        stack_result = results[stack_index] if stack_index != -1 else None
 
         raw_docs: list[Document] = []
 
-        if isinstance(gfg_result, Exception):
-            logger.warning(f"GFG scrape failed: {gfg_result}")
-        elif gfg_result:
+        if gfg_result and not isinstance(gfg_result, Exception):
             content = self._clean(str(gfg_result))
             if len(content) > 100: 
                 raw_docs.append(Document(page_content=content, metadata={"source": "gfg"}))

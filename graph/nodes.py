@@ -40,9 +40,12 @@ async def generate_fix(state: AgentState) -> AgentState:
 async def evaluate(state: AgentState) -> AgentState:
     logger.info("Node: evaluate")
     evaluator = Evaluator()
+    from pathlib import Path
+    filepath = Path(state["filepath"]) if state.get("filepath") else None
     result = await evaluator.evaluation(
         code=state["fix"],
         error=state["error"],
+        filepath=filepath,
     )
     history = state["history"] + [{
         "iteration": state["iterations"] + 1,
@@ -60,6 +63,28 @@ async def evaluate(state: AgentState) -> AgentState:
 async def refine(state: AgentState) -> AgentState:
     logger.info(f"Node: refine (iteration {state['iterations']})")
     feedback = state["evaluation"].feedback
+    code = state["fix"].correct_code
 
-    refined_code = f"# FEEDBACK FROM EVALUATOR:\n# {feedback}\n\n{state['fix'].correct_code}"
+    prompt = f"""You are a senior developer. Improve the following code based on the evaluation feedback.
+Return the corrected code directly inside JSON with key 'correct_code'. No markdown formatting outside JSON.
+
+Original Code:
+{code}
+
+Feedback / Error Traceback:
+{feedback}
+"""
+    from core.llm_client import LLM
+    import re
+    import json
+    model = LLM().get_llm()
+    result = model.invoke(prompt)
+    content = result.content if hasattr(result, "content") else str(result)
+    content_clean = re.sub(r"```(?:json)?", "", content).strip().rstrip("`").strip()
+    try:
+        parsed = json.loads(content_clean)
+        refined_code = parsed.get("correct_code", code)
+    except Exception:
+        refined_code = content_clean or code
+
     return {**state, "code": refined_code}

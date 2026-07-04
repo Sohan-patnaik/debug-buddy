@@ -1,2 +1,3 @@
 [project.scripts]
-debugai = "cli.main:app"
+debugbuddy = "main:app"
+debug-buddy = "main:app"

@@ -7,7 +7,20 @@ from rich.table import Table
 from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 from rich.markdown import Markdown
 from rich import box
+import sys
 from pathlib import Path
+
+# Prevent encoding crashes on Windows cmd/powershell
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+if hasattr(sys.stderr, "reconfigure"):
+    try:
+        sys.stderr.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
 
 app = typer.Typer(invoke_without_command=True, add_completion=False)
 console = Console()
@@ -141,12 +154,36 @@ def _save_fix(fix, original_path: Path) -> None:
     console.print(f"[dim]  Backup → {backup}[/dim]")
 
 
-async def _run_pipeline(code: str, error: str, threshold: float, max_iters: int) -> dict:
+def _print_diff(original: str, corrected: str, filepath: Path) -> None:
+    import difflib
+    orig_lines = original.splitlines(keepends=True)
+    corr_lines = corrected.splitlines(keepends=True)
+    
+    diff = list(difflib.unified_diff(
+        orig_lines, corr_lines,
+        fromfile=f"a/{filepath.name}",
+        tofile=f"b/{filepath.name}"
+    ))
+    
+    if not diff:
+        console.print("[yellow]⚠[/yellow] No changes proposed.")
+        return
+        
+    diff_text = "".join(diff)
+    console.print(Panel(
+        Syntax(diff_text, "diff", theme="monokai"),
+        title="[bold yellow]Proposed Changes (Unified Diff)[/bold yellow]",
+        box=box.ROUNDED
+    ))
+
+
+async def _run_pipeline(filepath: str, code: str, error: str, threshold: float, max_iters: int) -> dict:
     from graph.graph import build_graph
     from graph.state import AgentState
 
-    graph   = build_graph(threshold=threshold, max_iters=max_iters)
+    graph = build_graph(threshold=threshold, max_iters=max_iters)
     initial: AgentState = {
+        "filepath":     filepath,
         "code":         code,
         "error":        error,
         "context_docs": [],
@@ -174,17 +211,29 @@ def main(
     \b
     Quick start:
       debugbuddy myfile.py -e "NameError: name 'x' is not defined"
-      debugbuddy myfile.py          # prompts for error interactively
+      debugbuddy myfile.py          # runs file, auto-detects traceback
       debugbuddy myfile.py -a       # analyze only, no fix
     """
     path, code = _read_file(file)
     _print_header(file)
 
     if not error:
-        error = typer.prompt("Paste the error / traceback")
-    if not error.strip():
-        console.print("[red]✗[/red] An error message is required.")
-        raise typer.Exit(1)
+        if path.suffix.lower() == ".py":
+            console.print("[yellow]⚡[/yellow] No error message provided. Running file to capture traceback...")
+            from core.executor import PythonExecutor
+            executor = PythonExecutor()
+            exec_result = executor.execute_code(code, path)
+            if exec_result["success"]:
+                console.print("[green]✓[/green] Code executed successfully without errors. Nothing to debug!")
+                raise typer.Exit(0)
+            else:
+                error = exec_result["stderr"]
+                console.print(Panel(error, title="[bold red]Captured Traceback[/bold red]", box=box.ROUNDED))
+        else:
+            error = typer.prompt("Paste the error / traceback")
+            if not error.strip():
+                console.print("[red]✗[/red] An error message is required.")
+                raise typer.Exit(1)
 
     if analyze_only:
         from agents.bug_analyzer import Bug
@@ -209,7 +258,7 @@ def main(
                   TimeElapsedColumn(), console=console, transient=True) as progress:
         progress.add_task("Running pipeline…", total=None)
         try:
-            result = asyncio.run(_run_pipeline(code, error, threshold, max_iters))
+            result = asyncio.run(_run_pipeline(str(path), code, error, threshold, max_iters))
         except Exception as exc:
             console.print(f"\n[red]✗ Pipeline failed:[/red] {exc}")
             raise typer.Exit(1)
@@ -223,6 +272,7 @@ def main(
 
     fix = result.get("fix")
     if fix:
+        _print_diff(code, fix.correct_code, path)
         if save or typer.confirm("\nWrite fix to file?", default=False):
             _save_fix(fix, path)
         else:

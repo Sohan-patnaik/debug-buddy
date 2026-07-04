@@ -2,6 +2,8 @@ from schemas.schema import Evaluation, FixGenerator
 from langchain_core.prompts import PromptTemplate
 from core.logger import get_logger
 from core.llm_client import LLM
+from core.executor import PythonExecutor
+from pathlib import Path
 import json
 import re
 
@@ -42,9 +44,27 @@ def _extract_json(text: str) -> dict:
 
 class Evaluator:
 
-    async def evaluation(self, code: FixGenerator, error: str = "") -> Evaluation:
+    async def evaluation(self, code: FixGenerator, error: str = "", filepath: Path = None) -> Evaluation:
         logger.info("Evaluating fix")
 
+        # 1. Run PythonExecutor if it's a Python file
+        if filepath and filepath.suffix.lower() == ".py":
+            executor = PythonExecutor()
+            exec_result = executor.execute_code(code.correct_code, filepath)
+            
+            if not exec_result["success"]:
+                logger.warning("Code execution failed in evaluation.")
+                return Evaluation(
+                    validity=0.1,
+                    code_fix=0.1,
+                    regression_risk=0.8,
+                    score=0.1,
+                    feedback=f"Execution failed with the following traceback:\n{exec_result['stderr']}"
+                )
+            else:
+                logger.info("Code execution succeeded.")
+
+        # 2. Fallback or augment with LLM evaluation
         prompt = PromptTemplate(
             template=SYSTEM,
             input_variables=["error", "code"]
@@ -64,10 +84,10 @@ class Evaluator:
         except Exception as e:
             logger.warning(f"Evaluator JSON parse failed: {e} — assigning low score")
             parsed = {
-                "validity": 0.0,
-                "code_fix": 0.0,
-                "regression_risk": 1.0,
-                "score": 0.0,
+                "validity": 0.5,
+                "code_fix": 0.5,
+                "regression_risk": 0.5,
+                "score": 0.5,
                 "feedback": f"Could not parse evaluator output: {raw[:200]}",
             }
 
